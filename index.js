@@ -113,3 +113,9 @@ app.post('/favorites/:bookId', auth, async (req, res) => {
   await favorites.insertOne({ ...q, createdAt: new Date() });
   res.json({ favorite: true });
 });
+client.connect().then(() => {
+  const db = client.db('booknook');
+  books = db.collection('books'); borrows = db.collection('borrows'); reviews = db.collection('reviews'); favorites = db.collection('favorites');
+  app.listen(process.env.PORT || 5000, () => console.log('BookNook API running'));
+});
+module.exports = app;
