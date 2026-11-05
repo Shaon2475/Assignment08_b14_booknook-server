@@ -43,3 +43,25 @@ app.post('/books', auth, async (req, res) => {
   const r = await books.insertOne(doc);
   res.status(201).json({ ...doc, _id: r.insertedId });
 });
+
+// 4. update book (owner only, copies can be changed)
+app.patch('/books/:id', auth, async (req, res) => {
+  const _id = oid(req.params.id);
+  const { title, author, category, image, description, totalCopies } = req.body;
+  const book = _id && await books.findOne({ _id, userEmail: req.user.email });
+  if (!book) return res.status(403).json({ message: 'You can only edit your own books.' });
+  const total = Math.max(parseInt(totalCopies) || book.totalCopies, 1);
+  const borrowed = book.totalCopies - book.copies;
+  if (total < borrowed) return res.status(400).json({ message: `${borrowed} copies are borrowed right now, so total cannot be less than that.` });
+  await books.updateOne({ _id }, { $set: { title, author, category, image, description, totalCopies: total, copies: total - borrowed } });
+  res.json({ updated: true });
+});
+// 5. delete book (owner only)
+app.delete('/books/:id', auth, async (req, res) => {
+  const _id = oid(req.params.id);
+  const r = await books.deleteOne({ _id, userEmail: req.user.email });
+  if (!r.deletedCount) return res.status(403).json({ message: 'You can only delete your own books.' });
+  await borrows.deleteMany({ bookId: req.params.id });
+  await favorites.deleteMany({ bookId: req.params.id });
+  res.json({ deleted: true });
+});
