@@ -91,3 +91,25 @@ app.delete('/borrows/:id', auth, async (req, res) => {
   await books.updateOne({ _id: oid(b.bookId) }, { $inc: { copies: 1 } });
   res.json({ returned: true });
 });
+// extra: reader reviews
+app.get('/reviews', async (_, res) => res.json(await reviews.find().sort({ createdAt: -1 }).limit(12).toArray()));
+app.post('/reviews', auth, async (req, res) => {
+  const text = (req.body.text || '').trim();
+  const rating = Math.min(Math.max(parseInt(req.body.rating) || 5, 1), 5);
+  if (text.length < 5 || text.length > 300) return res.status(400).json({ message: 'Review must be 5 to 300 characters long.' });
+  const doc = { userName: req.user.name, userEmail: req.user.email, text, rating, createdAt: new Date() };
+  const r = await reviews.insertOne(doc);
+  res.status(201).json({ ...doc, _id: r.insertedId });
+});
+// extra: favourites (POST toggles on/off)
+app.get('/favorites', auth, async (req, res) => {
+  const favs = await favorites.find({ userEmail: req.user.email }).toArray();
+  const ids = favs.map((f) => oid(f.bookId)).filter(Boolean);
+  res.json(await books.find({ _id: { $in: ids } }).toArray());
+});
+app.post('/favorites/:bookId', auth, async (req, res) => {
+  const q = { userEmail: req.user.email, bookId: req.params.bookId };
+  if (await favorites.findOne(q)) { await favorites.deleteOne(q); return res.json({ favorite: false }); }
+  await favorites.insertOne({ ...q, createdAt: new Date() });
+  res.json({ favorite: true });
+});
