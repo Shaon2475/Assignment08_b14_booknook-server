@@ -8,6 +8,13 @@ const client = new MongoClient(process.env.MONGODB_URI);
 const secret = new TextEncoder().encode(process.env.JWT_SECRET);
 let books, borrows, reviews, favorites;
 const oid = (id) => (ObjectId.isValid(id) ? new ObjectId(id) : null);
+const ready = client.connect().then(() => {
+  const db = client.db('booknook');
+  books = db.collection('books'); borrows = db.collection('borrows'); reviews = db.collection('reviews'); favorites = db.collection('favorites');
+});
+app.use(async (req, res, next) => {
+  try { await ready; next(); } catch (e) { res.status(500).json({ message: 'Database connection failed.' }); }
+});
 
 // JWT middleware: protects private routes
 async function auth(req, res, next) {
@@ -20,20 +27,16 @@ async function auth(req, res, next) {
 
 app.get('/', (_, res) => res.json({ ok: true, name: 'BookNook API' }));
 
-// 1. all books (public) – supports ?limit=6, ?email=
 app.get('/books', async (req, res) => {
   const q = req.query.email ? { userEmail: req.query.email } : {};
   const limit = Math.min(parseInt(req.query.limit) || 0, 100);
   res.json(await books.find(q).sort({ addedAt: -1 }).limit(limit).toArray());
 });
-
-// 2. one book
 app.get('/books/:id', auth, async (req, res) => {
   const _id = oid(req.params.id);
   const book = _id && await books.findOne({ _id });
   book ? res.json(book) : res.status(404).json({ message: 'Book not found.' });
 });
-// 3. add book
 app.post('/books', auth, async (req, res) => {
   const { title, author, category, image, description, totalCopies } = req.body;
   if (!title || !author || !category || !image) return res.status(400).json({ message: 'Please fill in all required fields.' });
@@ -43,8 +46,6 @@ app.post('/books', auth, async (req, res) => {
   const r = await books.insertOne(doc);
   res.status(201).json({ ...doc, _id: r.insertedId });
 });
-
-// 4. update book (owner only, copies can be changed)
 app.patch('/books/:id', auth, async (req, res) => {
   const _id = oid(req.params.id);
   const { title, author, category, image, description, totalCopies } = req.body;
@@ -56,7 +57,6 @@ app.patch('/books/:id', auth, async (req, res) => {
   await books.updateOne({ _id }, { $set: { title, author, category, image, description, totalCopies: total, copies: total - borrowed } });
   res.json({ updated: true });
 });
-// 5. delete book (owner only)
 app.delete('/books/:id', auth, async (req, res) => {
   const _id = oid(req.params.id);
   const r = await books.deleteOne({ _id, userEmail: req.user.email });
@@ -65,7 +65,6 @@ app.delete('/books/:id', auth, async (req, res) => {
   await favorites.deleteMany({ bookId: req.params.id });
   res.json({ deleted: true });
 });
-// 6. borrow (copies check + no double borrow)
 app.post('/borrows', auth, async (req, res) => {
   const { bookId, days = 7 } = req.body;
   const _id = oid(bookId);
@@ -80,10 +79,9 @@ app.post('/borrows', auth, async (req, res) => {
   const r = await borrows.insertOne(doc);
   res.status(201).json({ ...doc, _id: r.insertedId });
 });
-// 7. my borrows
 app.get('/borrows', auth, async (req, res) =>
   res.json(await borrows.find({ userEmail: req.user.email }).sort({ borrowDate: -1 }).toArray()));
-// 8. return book
+
 app.delete('/borrows/:id', auth, async (req, res) => {
   const _id = oid(req.params.id);
   const b = _id && await borrows.findOneAndDelete({ _id, userEmail: req.user.email });
@@ -91,7 +89,7 @@ app.delete('/borrows/:id', auth, async (req, res) => {
   await books.updateOne({ _id: oid(b.bookId) }, { $inc: { copies: 1 } });
   res.json({ returned: true });
 });
-// extra: reader reviews
+
 app.get('/reviews', async (_, res) => res.json(await reviews.find().sort({ createdAt: -1 }).limit(12).toArray()));
 app.post('/reviews', auth, async (req, res) => {
   const text = (req.body.text || '').trim();
@@ -101,7 +99,6 @@ app.post('/reviews', auth, async (req, res) => {
   const r = await reviews.insertOne(doc);
   res.status(201).json({ ...doc, _id: r.insertedId });
 });
-// extra: favourites (POST toggles on/off)
 app.get('/favorites', auth, async (req, res) => {
   const favs = await favorites.find({ userEmail: req.user.email }).toArray();
   const ids = favs.map((f) => oid(f.bookId)).filter(Boolean);
@@ -113,9 +110,5 @@ app.post('/favorites/:bookId', auth, async (req, res) => {
   await favorites.insertOne({ ...q, createdAt: new Date() });
   res.json({ favorite: true });
 });
-client.connect().then(() => {
-  const db = client.db('booknook');
-  books = db.collection('books'); borrows = db.collection('borrows'); reviews = db.collection('reviews'); favorites = db.collection('favorites');
-  app.listen(process.env.PORT || 5000, () => console.log('BookNook API running'));
-});
+if (!process.env.VERCEL) app.listen(process.env.PORT || 5000, () => console.log('BookNook API running'));
 module.exports = app;
