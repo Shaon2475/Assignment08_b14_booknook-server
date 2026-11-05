@@ -26,3 +26,20 @@ app.get('/books', async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 0, 100);
   res.json(await books.find(q).sort({ addedAt: -1 }).limit(limit).toArray());
 });
+
+// 2. one book
+app.get('/books/:id', auth, async (req, res) => {
+  const _id = oid(req.params.id);
+  const book = _id && await books.findOne({ _id });
+  book ? res.json(book) : res.status(404).json({ message: 'Book not found.' });
+});
+// 3. add book
+app.post('/books', auth, async (req, res) => {
+  const { title, author, category, image, description, totalCopies } = req.body;
+  if (!title || !author || !category || !image) return res.status(400).json({ message: 'Please fill in all required fields.' });
+  const copies = Math.max(parseInt(totalCopies) || 1, 1);
+  const doc = { title, author, category, image, description, totalCopies: copies, copies,
+    userName: req.user.name, userEmail: req.user.email, addedAt: new Date() };
+  const r = await books.insertOne(doc);
+  res.status(201).json({ ...doc, _id: r.insertedId });
+});
