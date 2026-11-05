@@ -65,3 +65,29 @@ app.delete('/books/:id', auth, async (req, res) => {
   await favorites.deleteMany({ bookId: req.params.id });
   res.json({ deleted: true });
 });
+// 6. borrow (copies check + no double borrow)
+app.post('/borrows', auth, async (req, res) => {
+  const { bookId, days = 7 } = req.body;
+  const _id = oid(bookId);
+  const book = _id && await books.findOne({ _id });
+  if (!book) return res.status(404).json({ message: 'Book not found.' });
+  if (await borrows.findOne({ bookId, userEmail: req.user.email }))
+    return res.status(409).json({ message: 'You have already borrowed this book.' });
+  const dec = await books.updateOne({ _id, copies: { $gt: 0 } }, { $inc: { copies: -1 } });
+  if (!dec.modifiedCount) return res.status(409).json({ message: 'No copies available right now.' });
+  const borrowDate = new Date(), returnDate = new Date(Date.now() + Math.min(+days || 7, 30) * 864e5);
+  const doc = { bookId, bookTitle: book.title, bookImage: book.image, userEmail: req.user.email, borrowDate, returnDate };
+  const r = await borrows.insertOne(doc);
+  res.status(201).json({ ...doc, _id: r.insertedId });
+});
+// 7. my borrows
+app.get('/borrows', auth, async (req, res) =>
+  res.json(await borrows.find({ userEmail: req.user.email }).sort({ borrowDate: -1 }).toArray()));
+// 8. return book
+app.delete('/borrows/:id', auth, async (req, res) => {
+  const _id = oid(req.params.id);
+  const b = _id && await borrows.findOneAndDelete({ _id, userEmail: req.user.email });
+  if (!b) return res.status(404).json({ message: 'Borrow record not found.' });
+  await books.updateOne({ _id: oid(b.bookId) }, { $inc: { copies: 1 } });
+  res.json({ returned: true });
+});
